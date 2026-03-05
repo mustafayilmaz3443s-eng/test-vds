@@ -1,0 +1,53 @@
+name: TMATE-10
+
+on:
+  push:
+
+jobs:
+  tmate_nodes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        node: [1,2,3,4,5,6,7,8,9,10]
+
+    steps:
+      - name: Install tmate
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y tmate
+
+      - name: Start tmate + print ssh
+        shell: bash
+        run: |
+          set -e
+          SOCK="/tmp/tmate.sock"
+
+          tmate -S "$SOCK" new-session -d
+          tmate -S "$SOCK" wait tmate-ready
+
+          SSH_LINE="$(tmate -S "$SOCK" display -p '#{tmate_ssh}')"
+          WEB_LINE="$(tmate -S "$SOCK" display -p '#{tmate_web}')"
+
+          echo "NODE=${{ matrix.node }}" | tee ssh.txt
+          echo "SSH=${SSH_LINE}" | tee -a ssh.txt
+          echo "WEB=${WEB_LINE}" | tee -a ssh.txt
+          echo "-----" | tee -a ssh.txt
+
+          echo ""
+          echo "=============================="
+          echo "Node ${{ matrix.node }}:"
+          echo "$SSH_LINE"
+          echo "=============================="
+          echo ""
+
+      - name: Upload SSH info
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-${{ matrix.node }}
+          path: ssh.txt
+          retention-days: 1
+
+      - name: Keep session alive
+        run: sleep 6h
