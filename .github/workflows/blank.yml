@@ -1,0 +1,72 @@
+name: SSH
+
+on: [push]
+
+jobs:
+  ssh_nodes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        node: [1,2,3,4,5,6,7,8]
+
+    steps:
+      - name: Install tmate
+        run: |
+          sudo apt update
+          sudo apt install -y tmate
+
+      - name: Start tmate & save SSH info
+        run: |
+          set -e
+          SOCK="/tmp/tmate.sock"
+
+          tmate -S "$SOCK" new-session -d
+          tmate -S "$SOCK" wait tmate-ready
+
+          SSH_LINE="$(tmate -S "$SOCK" display -p '#{tmate_ssh}')"
+          WEB_LINE="$(tmate -S "$SOCK" display -p '#{tmate_web}')"
+
+          {
+            echo "NODE=${{ matrix.node }}"
+            echo "SSH=${SSH_LINE}"
+            echo "WEB=${WEB_LINE}"
+            echo "-----"
+          } > ssh.txt
+
+          echo "Node ${{ matrix.node }} SSH: $SSH_LINE"
+          echo "Node ${{ matrix.node }} WEB: $WEB_LINE"
+
+      - name: Upload ssh info (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-${{ matrix.node }}
+          path: ssh.txt
+
+      - name: Keep session alive
+        run: sleep 6h
+
+  collect_all:
+    needs: [ssh_nodes]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all ssh artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Merge into ALL_SSH.txt
+        run: |
+          set -e
+          echo "Generated at: $(date -u)" > ALL_SSH.txt
+          echo "" >> ALL_SSH.txt
+          find artifacts -type f -name "ssh.txt" -print0 | sort -z | xargs -0 cat >> ALL_SSH.txt
+          echo "" >> ALL_SSH.txt
+          echo "Done. Lines:" && wc -l ALL_SSH.txt
+
+      - name: Upload ALL_SSH.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALL_SSH
+          path: ALL_SSH.txt
