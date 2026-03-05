@@ -1,0 +1,80 @@
+  collect_all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait a bit for artifacts
+        run: sleep 20
+
+      - name: Try download all artifacts (repeat)
+        shell: bash
+        run: |
+          set -e
+          EXPECTED=15
+          for i in $(seq 1 60); do
+            rm -rf artifacts || true
+            mkdir -p artifacts
+            echo "Attempt $i..."
+
+            # download-artifact stepini CLI ile çağırmak mümkün değil, o yüzden
+            # GitHub API ile indireceğiz:
+            echo "Listing artifacts via API..."
+            curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              > artifacts.json
+
+            COUNT=$(python3 - << 'PY'
+import json
+data=json.load(open("artifacts.json","r",encoding="utf-8"))
+print(len(data.get("artifacts",[])))
+PY
+)
+            echo "Artifacts found: $COUNT / $EXPECTED"
+
+            if [ "$COUNT" -ge "$EXPECTED" ]; then
+              echo "All artifacts are present."
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Download all artifacts zip via API and extract
+        shell: bash
+        run: |
+          set -e
+          mkdir -p artifacts
+
+          python3 - << 'PY'
+import json, os, subprocess, sys
+data=json.load(open("artifacts.json","r",encoding="utf-8"))
+arts=data.get("artifacts",[])
+if not arts:
+    print("No artifacts yet."); sys.exit(1)
+
+for a in arts:
+    name=a["name"]
+    url=a["archive_download_url"]
+    out=f"artifacts/{name}.zip"
+    subprocess.check_call([
+        "curl","-L","-sS",
+        "-H",f"Authorization: Bearer {os.environ['GITHUB_TOKEN']}",
+        "-H","Accept: application/vnd.github+json",
+        url,"-o",out
+    ])
+    subprocess.check_call(["unzip","-o",out,"-d",f"artifacts/{name}"])
+print("Downloaded & extracted:", len(arts))
+PY
+
+      - name: Merge into ALL_SSH.txt
+        run: |
+          set -e
+          echo "Generated at: $(date -u)" > ALL_SSH.txt
+          echo "" >> ALL_SSH.txt
+          find artifacts -type f -name "ssh.txt" -print0 | sort -z | xargs -0 cat >> ALL_SSH.txt
+          echo "" >> ALL_SSH.txt
+          wc -l ALL_SSH.txt
+
+      - name: Upload ALL_SSH.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALL_SSH
+          path: ALL_SSH.txt
