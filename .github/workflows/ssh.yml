@@ -1,0 +1,19 @@
+name: SSH
+
+on: [push]
+
+jobs:
+  ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install tmate
+        run: |
+          sudo apt update
+          sudo apt install tmate -y
+
+      - name: Start SSH session
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 6h
