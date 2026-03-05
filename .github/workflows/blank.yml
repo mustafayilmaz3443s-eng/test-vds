@@ -2,22 +2,27 @@ name: SSH
 
 on: [push]
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   ssh_nodes:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 5
       matrix:
-        node: [1,2,3,4,5,6,7,8]
+        node: [1,2,3,4,5]
 
     steps:
       - name: Install tmate
         run: |
-          sudo apt update
-          sudo apt install -y tmate
+          sudo apt-get update -y
+          sudo apt-get install -y tmate
 
-      - name: Start tmate & save SSH info
+      - name: Start tmate & write ssh.txt
+        shell: bash
         run: |
           set -e
           SOCK="/tmp/tmate.sock"
@@ -35,38 +40,60 @@ jobs:
             echo "-----"
           } > ssh.txt
 
-          echo "Node ${{ matrix.node }} SSH: $SSH_LINE"
-          echo "Node ${{ matrix.node }} WEB: $WEB_LINE"
+          echo "Node ${{ matrix.node }} => $SSH_LINE"
 
-      - name: Upload ssh info (artifact)
+      - name: Upload ssh.txt
         uses: actions/upload-artifact@v4
         with:
           name: ssh-${{ matrix.node }}
           path: ssh.txt
+          retention-days: 1
 
       - name: Keep session alive
         run: sleep 6h
 
   collect_all:
-    needs: [ssh_nodes]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all ssh artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Merge into ALL_SSH.txt
+      - name: Wait for artifacts then merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          EXPECTED=15
+
+          for i in $(seq 1 120); do
+            rm -rf artifacts || true
+            mkdir -p artifacts
+
+            # Bu run içindeki şu ana kadar üretilen artifact'ları indirir
+            gh run download "${GITHUB_RUN_ID}" -R "${GITHUB_REPOSITORY}" -D artifacts >/dev/null 2>&1 || true
+
+            COUNT=$(find artifacts -type f -name "ssh.txt" 2>/dev/null | wc -l | tr -d ' ')
+            echo "Attempt $i: ssh.txt count = $COUNT / $EXPECTED"
+
+            if [ "$COUNT" -ge "$EXPECTED" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$COUNT" -lt "$EXPECTED" ]; then
+            echo "Warning: Not all artifacts arrived in time, merging what we have..."
+          fi
+
           echo "Generated at: $(date -u)" > ALL_SSH.txt
           echo "" >> ALL_SSH.txt
           find artifacts -type f -name "ssh.txt" -print0 | sort -z | xargs -0 cat >> ALL_SSH.txt
-          echo "" >> ALL_SSH.txt
-          echo "Done. Lines:" && wc -l ALL_SSH.txt
+
+          echo ""
+          echo "ALL_SSH.txt created:"
+          wc -l ALL_SSH.txt
 
       - name: Upload ALL_SSH.txt
         uses: actions/upload-artifact@v4
         with:
           name: ALL_SSH
           path: ALL_SSH.txt
+          retention-days: 1
